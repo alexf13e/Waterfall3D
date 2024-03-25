@@ -124,7 +124,7 @@ namespace CUDADeviceFunctions
 		forceViscosity *= simSettings.viscosity;
 
 		glm::vec3 particleAcceleration = forcePressure + forceViscosity; //mass factored out in force calculation
-		particleAcceleration.y -= simSettings.gravity;
+		particleAcceleration += simSettings.gravity;
 
 		return particleAcceleration;
 	}
@@ -262,7 +262,7 @@ namespace CUDADeviceFunctions
 		forceViscosity *= simSettings.viscosity;
 
 		glm::vec3 particleAcceleration = forcePressure + forceViscosity; //mass factored out in force calculation
-		particleAcceleration.y -= simSettings.gravity;
+		particleAcceleration += simSettings.gravity;
 
 		return particleAcceleration;
 	}

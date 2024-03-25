@@ -53,7 +53,8 @@ void UniformGrid::destroy()
 	initialised = false;
 }
 
-void UniformGrid::update(const SPHSimulationData& simData, const SPHConfiguration& simSettings)
+void UniformGrid::update(const SPHSimulationData& simData, const SPHConfiguration& simSettings, bool enableTiming,
+	std::vector<std::pair<std::string, float>>& timingValues)
 {
 	if (!initialised) return;
 
@@ -61,64 +62,75 @@ void UniformGrid::update(const SPHSimulationData& simData, const SPHConfiguratio
 	int numBlocks = (simSettings.numParticles - 1) / blockSize + 1;
 
 	//update which cells contain which particles
-#if ENABLE_TIMING_SPH
-	std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-	CUDAKernels::UGUpdateCellParticles<<<numBlocks, blockSize>>>(simData, simSettings, this->data, this->settings);
-	cudaDeviceSynchronize();
-	std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-	float dt = (t2 - t1).count() * 1e-9;
-	std::cout << dt << ",";
-#else
-	CUDAKernels::UGUpdateCellParticles<<<numBlocks, blockSize>>>(simData, simSettings, this->data, this->settings);
-#endif
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess)
+	if (enableTiming)
 	{
-		std::cerr << "CUDA error in UGUpdateCellParticles: " << cudaGetErrorName(err) << std::endl;
+		std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+		CUDAKernels::UGUpdateCellParticles << <numBlocks, blockSize >> > (simData, simSettings, this->data, this->settings);
+		cudaDeviceSynchronize();
+		std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+		float dt = (t2 - t1).count() * 1e-9;
+		timingValues.push_back({ "UGUpdateCellParticles", dt });
+
+		cudaError_t err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellParticles: " << cudaGetErrorName(err) << std::endl;
+		}
+
+		t1 = std::chrono::high_resolution_clock::now();
+		thrust::sort_by_key(thrust::device_ptr<int>(data.d_cellIDs),
+			thrust::device_ptr<int>(data.d_cellIDs + simSettings.numParticles),
+			thrust::device_ptr<int>(data.d_particleIDs));
+		cudaDeviceSynchronize();
+		t2 = std::chrono::high_resolution_clock::now();
+		dt = (t2 - t1).count() * 1e-9;
+		timingValues.push_back({ "UGSort", dt });
+
+		t1 = std::chrono::high_resolution_clock::now();
+		cudaMemset(data.d_cellStarts, -1, sizeof(int) * settings.numCells);
+		CUDAKernels::UGUpdateCellStarts << <numBlocks, blockSize >> > (simSettings, data);
+		cudaDeviceSynchronize();
+		t2 = std::chrono::high_resolution_clock::now();
+		dt = (t2 - t1).count() * 1e-9;
+		timingValues.push_back({ "UGUpdateCellStarts", dt });
+
+		err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellStarts: " << cudaGetErrorName(err) << std::endl;
+		}
 	}
-
-	//cellIDs[i] contains the index of the cell which particle with index i is in
-	//particleIDs[i] contains i, just as a list of the all particle IDs, which will be sorted to maintain the pairing
-	//with cellIDs when cellIDs is sorted to be ascending
-
-
-	//sort particles by which cell they are in
-	//cellID is key, particleID is the value
-	//both keys and values will be sorted
-#if ENABLE_TIMING_SPH
-	t1 = std::chrono::high_resolution_clock::now();
-	thrust::sort_by_key(thrust::device_ptr<int>(data.d_cellIDs),
-		thrust::device_ptr<int>(data.d_cellIDs + simSettings.numParticles),
-		thrust::device_ptr<int>(data.d_particleIDs));
-	cudaDeviceSynchronize();
-	t2 = std::chrono::high_resolution_clock::now();
-	dt = (t2 - t1).count() * 1e-9;
-	std::cout << dt << ",";
-#else
-	thrust::sort_by_key(thrust::device_ptr<int>(data.d_cellIDs),
-		thrust::device_ptr<int>(data.d_cellIDs + simSettings.numParticles),
-		thrust::device_ptr<int>(data.d_particleIDs));
-#endif
-
-	//update cellStarts
-	//need to be initialised as having no cells, then ones which do have cells will be overwritten
-#if ENABLE_TIMING_SPH
-	t1 = std::chrono::high_resolution_clock::now();
-	cudaMemset(data.d_cellStarts, -1, sizeof(int) * settings.numCells);
-	CUDAKernels::UGUpdateCellStarts<<<numBlocks, blockSize>>>(simSettings, data);
-	cudaDeviceSynchronize();
-	t2 = std::chrono::high_resolution_clock::now();
-	dt = (t2 - t1).count() * 1e-9;
-	std::cout << dt << ",";
-#else
-	cudaMemset(data.d_cellStarts, -1, sizeof(int) * settings.numCells);
-	CUDAKernels::UGUpdateCellStarts<<<numBlocks, blockSize>>>(simSettings, data);
-#endif
-	err = cudaGetLastError();
-	if (err != cudaSuccess)
+	else
 	{
-		std::cerr << "CUDA error in UGUpdateCellStarts: " << cudaGetErrorName(err) << std::endl;
+		//update cellIDs for new particle positions (and reset particleIDs)
+		CUDAKernels::UGUpdateCellParticles << <numBlocks, blockSize >> > (simData, simSettings, this->data, this->settings);
+		cudaError_t err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellParticles: " << cudaGetErrorName(err) << std::endl;
+		}
+
+		//cellIDs[i] contains the index of the cell which particle with index i is in
+		//particleIDs[i] contains i, just as a list of the all particle IDs, which will be sorted to maintain the
+		//pairing with cellIDs when cellIDs is sorted to be ascending
+
+		//sort particles by which cell they are in
+		//cellID is key, particleID is the value
+		//both keys and values will be sorted
+		thrust::sort_by_key(thrust::device_ptr<int>(data.d_cellIDs),
+			thrust::device_ptr<int>(data.d_cellIDs + simSettings.numParticles),
+			thrust::device_ptr<int>(data.d_particleIDs));
+
+		//update cellStarts
+		//need to be initialised as having no cells, then ones which do have cells will be overwritten
+		cudaMemset(data.d_cellStarts, -1, sizeof(int) * settings.numCells);
+
+		CUDAKernels::UGUpdateCellStarts << <numBlocks, blockSize >> > (simSettings, data);
+		err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellStarts: " << cudaGetErrorName(err) << std::endl;
+		}
 	}
 
 	//cellStarts[i] contains the index for the first particle in particleIDs which is in cell with id i
@@ -140,7 +152,7 @@ bool SPHSolver::init(const SPHConfiguration& settings, const float& simRegionSiz
 	}
 
 	simSettings = settings;
-	
+
 	//placeholder arrays initialised to 0
 	glm::vec3* emptyDataVec3 = new glm::vec3[simSettings.numParticles]();
 	float* emptyDataFloat = new float[simSettings.numParticles]();
@@ -193,10 +205,8 @@ bool SPHSolver::init(const SPHConfiguration& settings, const float& simRegionSiz
 		return false;
 	}
 
-#if USE_UNIFORM_GRID
 	uniformGrid = new UniformGrid();
 	if (uniformGrid->init(simSettings.smoothingRadius, simRegionSize, simSettings.numParticles) == false) return false;
-#endif
 
 	timeElapsed = 0.0f;
 	initialised = true;
@@ -206,22 +216,25 @@ bool SPHSolver::init(const SPHConfiguration& settings, const float& simRegionSiz
 
 void SPHSolver::destroy()
 {
-	glDeleteBuffers(1, &simData.gl_positionsVBO);
-	glDeleteBuffers(1, &simData.gl_predictedPositionsVBO);
-	glDeleteVertexArrays(1, &simData.gl_positionsVAO);
-	glDeleteVertexArrays(1, &simData.gl_predictedPositionsVAO);
+	if (initialised)
+	{
+		glDeleteBuffers(1, &simData.gl_positionsVBO);
+		glDeleteBuffers(1, &simData.gl_predictedPositionsVBO);
+		glDeleteVertexArrays(1, &simData.gl_positionsVAO);
+		glDeleteVertexArrays(1, &simData.gl_predictedPositionsVAO);
 
-	cudaFree(simData.d_velocities);
-	cudaFree(simData.d_accelerations);
-	cudaFree(simData.d_densities);
-	cudaFree(simData.d_distances);
+		cudaFree(simData.d_velocities);
+		cudaFree(simData.d_accelerations);
+		cudaFree(simData.d_densities);
+		cudaFree(simData.d_distances);
 
-	//uniformGrid deleted automatically when solver class is
-	
-	initialised = false;
+		//uniformGrid deleted automatically when solver class is
+
+		initialised = false;
+	}
 }
 
-bool SPHSolver::update(int iterations)
+bool SPHSolver::update(int iterations, bool enableTiming, std::vector<std::pair<std::string, float>>& timingValues)
 {
 	if (!initialised)
 	{
@@ -233,60 +246,80 @@ bool SPHSolver::update(int iterations)
 	int numBlocks = (simSettings.numParticles - 1) / blockSize + 1;
 
 	mapCudaResources(); //to use particle position data which is shared with opengl
-	while (iterations > 0)
+	if (enableTiming)
 	{
-#if ENABLE_TIMING_SPH
-		std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
-		cudaDeviceSynchronize();
-		std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		float dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: updatePredictedParticlePositions: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
-#endif
-		cudaError_t err = cudaGetLastError();
-		if (err != cudaSuccess)
-		{
-			std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
-		}
 
-#if ENABLE_TIMING_SPH
-		t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::calculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings);
-		cudaDeviceSynchronize();
-		t2 = std::chrono::high_resolution_clock::now();
-		dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: calculateInterParticleValues: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::calculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings);
-#endif
-		err = cudaGetLastError();
-		if (err != cudaSuccess)
+		while (iterations > 0)
 		{
-			std::cerr << "CUDA error in calculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
-		}
+			std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaDeviceSynchronize();
+			std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+			float dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "updatePredictedParticlePositions", dt });
 
-#if ENABLE_TIMING_SPH
-		t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::processTimeStep << <numBlocks, blockSize >> > (simData, simSettings);
-		cudaDeviceSynchronize();
-		t2 = std::chrono::high_resolution_clock::now();
-		dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: processTimeStep: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::processTimeStep << <numBlocks, blockSize >> > (simData, simSettings);
-#endif
-		err = cudaGetLastError();
-		if (err != cudaSuccess)
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::calculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaDeviceSynchronize();
+			t2 = std::chrono::high_resolution_clock::now();
+			dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "calculateInterParticleValues", dt });
+
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in calculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::processTimeStep << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaDeviceSynchronize();
+			t2 = std::chrono::high_resolution_clock::now();
+			dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "processTimeStep", dt });
+
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in processTimeStep: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			iterations--;
+		}
+	}
+	else
+	{
+		while (iterations > 0)
 		{
-			std::cerr << "CUDA error in processTimeStep: " << cudaGetErrorName(err) << std::endl;
-		}
+			CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
+			}
 
-		iterations--;
+			CUDAKernels::calculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings);
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in calculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			CUDAKernels::processTimeStep << <numBlocks, blockSize >> > (simData, simSettings);
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in processTimeStep: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			iterations--;
+		}
 	}
 	unmapCudaResources(); //must be unmapped before being used by opengl (or else)
 
@@ -296,7 +329,7 @@ bool SPHSolver::update(int iterations)
 	return true;
 }
 
-bool SPHSolver::UGUpdate(int iterations)
+bool SPHSolver::UGUpdate(int iterations, bool enableTiming, std::vector<std::pair<std::string, float>>& timingValues)
 {
 	if (!initialised)
 	{
@@ -311,63 +344,84 @@ bool SPHSolver::UGUpdate(int iterations)
 	const UniformGridData& ugData = uniformGrid->getData();
 
 	mapCudaResources(); //to use particle position data which is shared with opengl
-	while (iterations > 0)
+	if (enableTiming)
 	{
-#if ENABLE_TIMING_SPH
-		std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
-		cudaDeviceSynchronize();
-		std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		float dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: updatePredictedParticlePositions: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
-#endif
-		cudaError_t err = cudaGetLastError();
-		if (err != cudaSuccess)
+		while (iterations > 0)
 		{
-			std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
+			std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaDeviceSynchronize();
+			std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+			float dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "updatePredictedParticlePositions", dt });
+
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			//predicted positions should be set before being used by uniform grid
+			uniformGrid->update(simData, simSettings, enableTiming, timingValues);
+
+			t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::UGCalculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
+			cudaDeviceSynchronize();
+			t2 = std::chrono::high_resolution_clock::now();
+			dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "UGCalculateInterParticleValues", dt });
+
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in UGCalculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::UGProcessTimeStep << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
+			cudaDeviceSynchronize();
+			t2 = std::chrono::high_resolution_clock::now();
+			dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "UGProcessTimeStep", dt });
+
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in UGProcessTimeStep: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			iterations--;
 		}
-
-		//predicted positions should be set before being used by uniform grid
-		uniformGrid->update(simData, simSettings);
-
-#if ENABLE_TIMING_SPH
-		t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::UGCalculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
-		cudaDeviceSynchronize();
-		t2 = std::chrono::high_resolution_clock::now();
-		dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: calculateInterParticleValues: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::UGCalculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
-#endif
-		err = cudaGetLastError();
-		if (err != cudaSuccess)
+	}
+	else
+	{
+		while (iterations > 0)
 		{
-			std::cerr << "CUDA error in calculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
-		}
+			CUDAKernels::updatePredictedParticlePositions << <numBlocks, blockSize >> > (simData, simSettings);
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in updatePredictedParticlePositions: " << cudaGetErrorName(err) << std::endl;
+			}
 
-#if ENABLE_TIMING_SPH
-		t1 = std::chrono::high_resolution_clock::now();
-		CUDAKernels::UGProcessTimeStep << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
-		cudaDeviceSynchronize();
-		t2 = std::chrono::high_resolution_clock::now();
-		dt = (t2 - t1).count() * 1e-9;
-		//std::cout << "Kernel time: processTimeStep: " << std::to_string(dt * 1e3) << "ms" << std::endl;
-		std::cout << std::to_string(dt) << ",";
-#else
-		CUDAKernels::UGProcessTimeStep << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
-#endif
-		err = cudaGetLastError();
-		if (err != cudaSuccess)
-		{
-			std::cerr << "CUDA error in processTimeStep: " << cudaGetErrorName(err) << std::endl;
-		}
+			uniformGrid->update(simData, simSettings, enableTiming, timingValues);
 
-		iterations--;
+			CUDAKernels::UGCalculateInterParticleValues << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in UGCalculateInterParticleValues: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			CUDAKernels::UGProcessTimeStep << <numBlocks, blockSize >> > (simData, simSettings, ugData, ugSettings);
+			err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in UGProcessTimeStep: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			iterations--;
+		}
 	}
 	unmapCudaResources(); //must be unmapped before being used by opengl (or else)
 	

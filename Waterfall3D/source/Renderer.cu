@@ -13,11 +13,6 @@
 #include "CUDAFunctions.cuh"
 
 
-#if ENABLE_TIMING_GL
-unsigned int timeQueryID;
-uint64_t elapsedTime; //uint64 because i'm sure i'll manage to go over 2 seconds
-#endif
-
 void Camera::updateDirection()
 {
 	direction = glm::vec3(
@@ -34,7 +29,25 @@ void Camera::updateViewMatrix()
 	updatedSinceLastFrame = true;
 }
 
-void Camera::init()
+void Camera::updatePerspective()
+{
+	matProj = glm::perspective(fov, ar, clipNear, clipFar);
+	updatedSinceLastFrame = true;
+}
+
+void Camera::setFieldOfView(const float fieldOfView)
+{
+	fov = fieldOfView;
+	updatePerspective();
+}
+
+void Camera::setAspectRatio(const float width, const float height)
+{
+	ar = width / height;
+	updatePerspective();
+}
+
+void Camera::init(const float aspectRatio)
 {
 	initialised = false;
 
@@ -43,8 +56,12 @@ void Camera::init()
 	
 	updateDirection();
 
-	matProj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10000.0f); //make parameters of init function
-
+	//default perspective values
+	fov = glm::radians(90.0f);
+	ar = aspectRatio;
+	clipNear = 0.1f;
+	clipFar = 1000.0f;
+	updatePerspective();
 
 	initialised = true;
 }
@@ -71,7 +88,7 @@ bool Renderer::init(const uint32_t& resx, const uint32_t& resy, const glm::vec4&
 	this->windowResolution = glm::vec2(resx, resy);
 	glViewport(0, 0, resx, resy);
 
-	this->cam.init();
+	this->cam.init((float)resx / resy);
 
 	if (!this->shWorldToScreen.init("shaders/basicProjection.vert", "shaders/basicColour.frag")) return false;
 
@@ -97,7 +114,6 @@ bool Renderer::init(const uint32_t& resx, const uint32_t& resy, const glm::vec4&
 	delete[] boundaryPoints;
 
 	//create vertex data for uniform grid
-#if USE_UNIFORM_GRID && DRAW_UNIFORM_GRID
 	const int& ugCellDim = uniformGrid.getSettings().dimCells;
 
 	//number of points to draw edges of grid. points need to cover surfaces of perimeter e.g. 3x3x3 cells needs
@@ -140,7 +156,6 @@ bool Renderer::init(const uint32_t& resx, const uint32_t& resy, const glm::vec4&
 	glEnableVertexAttribArray(0);
 
 	delete[] ugPoints;
-#endif
 
 #if RENDERMODE == RM_METABALLS
 	mbSampler.r1 = 0.03f; //below this distance, value contributions capped to 1
@@ -232,17 +247,16 @@ bool Renderer::init(const uint32_t& resx, const uint32_t& resy, const glm::vec4&
 
 	this->coldColour = coldColour;
 	this->hotColour = hotColour;
+	this->showUniformGrid = false;
 
 	this->initialised = true;
 
-#if ENABLE_TIMING_GL
 	glGenQueries(1, &timeQueryID);
-#endif
 
 	return true;
 }
 
-void Renderer::visualise(SPHSolver& solver)
+void Renderer::visualise(SPHSolver& solver, bool enableTiming, std::vector<std::pair<std::string, float>>& timingValues)
 {
 	if (cam.getUpdated())
 	{
@@ -275,13 +289,11 @@ void Renderer::visualise(SPHSolver& solver)
 	}
 #endif
 
-#if ENABLE_TIMING_GL
-	//https://www.lighthouse3d.com/tutorials/opengl-timer-query/
-	glBeginQuery(GL_TIME_ELAPSED, timeQueryID);
-#endif
-
-	glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
+	if (enableTiming)
+	{
+		//https://www.lighthouse3d.com/tutorials/opengl-timer-query/
+		glBeginQuery(GL_TIME_ELAPSED, timeQueryID);
+	}
 
 #if RENDERMODE == RM_POINTS
 	glUseProgram(this->shWorldToScreen.getID());
@@ -311,28 +323,31 @@ void Renderer::visualise(SPHSolver& solver)
 	glDrawArrays(GL_LINES, 0, solver.getSimData().worldBoundaryCount * 2);
 
 
-#if USE_UNIFORM_GRID && DRAW_UNIFORM_GRID
-	//draw uniform grid
-	glBindVertexArray(this->vao_ugLines);
-	float gridColour[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
-	glUniform4fv(glGetUniformLocation(this->shWorldToScreen.getID(), "colour"), 1, gridColour);
-	glDrawArrays(GL_LINES, 0, solver.getUniformGrid().getSettings().numLinesToDraw);
-#endif
-
-
-#if ENABLE_TIMING_GL
-	glEndQuery(GL_TIME_ELAPSED);
-
-	int queryReady = 0;
-	while (!queryReady)
+	if (showUniformGrid)
 	{
-		glGetQueryObjectiv(timeQueryID, GL_QUERY_RESULT_AVAILABLE, &queryReady);
+		//draw uniform grid
+		glBindVertexArray(this->vao_ugLines);
+		float gridColour[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+		glUniform4fv(glGetUniformLocation(this->shWorldToScreen.getID(), "colour"), 1, gridColour);
+		glDrawArrays(GL_LINES, 0, solver.getUniformGrid().getSettings().numLinesToDraw);
 	}
+	
 
-	glGetQueryObjectui64v(timeQueryID, GL_QUERY_RESULT, &elapsedTime);
-	//std::cout << "Render time: particle frag shader: " << std::to_string(elapsedTime * 1e-6) << "ms" << std::endl;
-	std::cout << std::to_string(elapsedTime * 1e-9) << ",";
-#endif
+	if (enableTiming)
+	{
+		glEndQuery(GL_TIME_ELAPSED);
+
+		int queryReady = 0;
+		while (!queryReady)
+		{
+			glGetQueryObjectiv(timeQueryID, GL_QUERY_RESULT_AVAILABLE, &queryReady);
+		}
+
+		glGetQueryObjectui64v(timeQueryID, GL_QUERY_RESULT, &elapsedTime);
+		float dt = elapsedTime * 1e-9;
+		timingValues.push_back({ "Render", dt });
+	}
+	
 
 	glUseProgram(0);
 	glBindVertexArray(0);
@@ -340,18 +355,21 @@ void Renderer::visualise(SPHSolver& solver)
 
 void Renderer::destroy()
 {
-	glDeleteBuffers(1, &vbo_boundaryLines);
-	glDeleteBuffers(1, &vbo_ugLines);
-	glDeleteBuffers(1, &mbSampler.vbo_samplePoints);
-	glDeleteBuffers(1, &mbSampler.ebo_samplePoints);
+	if (initialised)
+	{
+		glDeleteBuffers(1, &vbo_boundaryLines);
+		glDeleteBuffers(1, &vbo_ugLines);
+		glDeleteBuffers(1, &mbSampler.vbo_samplePoints);
+		glDeleteBuffers(1, &mbSampler.ebo_samplePoints);
 
-	glDeleteVertexArrays(1, &vao_fullscreenTri);
-	glDeleteVertexArrays(1, &vao_boundaryLines);
-	glDeleteVertexArrays(1, &vao_ugLines);
-	glDeleteVertexArrays(1, &mbSampler.vao_samplePoints);
+		glDeleteVertexArrays(1, &vao_boundaryLines);
+		glDeleteVertexArrays(1, &vao_ugLines);
+		glDeleteVertexArrays(1, &mbSampler.vao_samplePoints);
 
+		this->shWorldToScreen.destroy();
 
-	this->shWorldToScreen.destroy();
+		initialised = false;
+	}
 }
 
 void Renderer::updateWindowRes(const int& width, const int& height)
@@ -359,7 +377,7 @@ void Renderer::updateWindowRes(const int& width, const int& height)
 	this->windowResolution = glm::vec2(width, height);
 	glViewport(0, 0, width, height);
 
-	//update camera aspect ratio
+	cam.setAspectRatio(width, height);
 }
 
 void Renderer::updateCam(const glm::vec3& deltaPos, const glm::vec2& deltaAngles)

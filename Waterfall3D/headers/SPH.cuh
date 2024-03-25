@@ -3,6 +3,7 @@
 #define SPH2DCUDA_H
 
 #include <vector>
+#include <string>
 
 #include "DebugOptions.h"
 #include "glm/glm.hpp"
@@ -24,7 +25,7 @@ struct SPHConfiguration
 	int numParticleDistances;
 	float particleMass;
 
-	float gravity;
+	glm::vec3 gravity;
 	float viscosity;
 	float smoothingRadius;
 	float stiffnessConstant;
@@ -76,7 +77,8 @@ public:
 	bool init(const float& smoothingRadius, const float& simRegionSize, const int& numParticles);
 	void destroy();
 
-	void update(const SPHSimulationData& simData, const SPHConfiguration& simSettings);
+	void update(const SPHSimulationData& simData, const SPHConfiguration& simSettings, bool enableTiming,
+		std::vector<std::pair<std::string, float>>& timingValues);
 };
 
 class SPHSolver
@@ -97,13 +99,22 @@ public:
 	const SPHSimulationData& getSimData() const { return simData; }
 	UniformGrid& getUniformGrid() const { return *uniformGrid; }  //has be non-const so that renderer can update numLinesToDraw
 
+	//real time changeable settings
+	void setTimeStep(const float timeStep) { simSettings.timeStep = timeStep; }
+	void setParticleMass(const float particleMass) { simSettings.particleMass = particleMass; }
+	void setGravity(const glm::vec3 gravity) { simSettings.gravity = gravity; }
+	void setViscosity(const float viscosity) { simSettings.viscosity = viscosity; }
+	void setStiffnessConstant(const float stiffnessConstant) { simSettings.stiffnessConstant = stiffnessConstant; }
+	void setRestDensity(const float restDensity) { simSettings.restDensity = restDensity; }
+	void setBoundaryCollisionDamping(const float boundaryCollisionDamping) { simSettings.boundaryCollisionDamping = boundaryCollisionDamping; } 
+
 	~SPHSolver();
 
 	bool init(const SPHConfiguration& settings, const float& simRegionSize);
 	void destroy();
 
-	bool update(int iterations);
-	bool UGUpdate(int iterations);
+	bool update(int iterations, bool enableTiming, std::vector<std::pair<std::string, float>>& timingValues);
+	bool UGUpdate(int iterations, bool enableTiming, std::vector<std::pair<std::string, float>>& timingValues);
 
 	void setInitialParticlePositions(const float spacing);
 	void setWorldBoundaries(Boundary* boundaries, int count);

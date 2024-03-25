@@ -7,8 +7,12 @@
 
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtx/vector_angle.hpp"
+#include "glm/gtc/type_ptr.hpp"
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 
 #include "DebugOptions.h"
 #include "SPH.cuh"
@@ -26,6 +30,8 @@ SPHSolver solver;
 Renderer renderer;
 
 int simIterationsPerFrame;
+bool useUniformGrid;
+float simBoxSize;
 
 glm::vec2 prevMousePosScreen;
 float scrollSensitivity;
@@ -79,6 +85,12 @@ static std::map<int, Key> keyMap = {
 std::ofstream timingFile;
 std::chrono::high_resolution_clock::time_point prevFrameEndTime;
 float frameDuration;
+bool etSimulation, etRender; //enable timings
+bool saveTimings; //capture timings and write to file
+std::vector<std::pair<std::string, float>> timingValues; //string for name of time value, float for value itself
+
+bool simulationInitialised;
+bool paused, step;
 
 
 static void windowResize(GLFWwindow* window, int width, int height)
@@ -114,20 +126,6 @@ static void mouseScroll(GLFWwindow* window, double dx, double dy)
 	scrollOccurred = true;
 }
 
-void userInteractParticles(const glm::vec2& worldPos, bool attract)
-{
-	float radius = 2.0f;
-	float acceleration = 2.0f;
-
-	if (attract)
-	{
-		acceleration = -acceleration;
-	}
-
-	//solver.userInteractParticles(worldPos, radius, -acceleration);
-	//renderer.drawCircle(worldPos, radius);
-}
-
 GLFWwindow* initGL()
 {
 	glfwInit();
@@ -158,16 +156,22 @@ GLFWwindow* initGL()
 	return window;
 }
 
-bool init()
+void initImGui()
 {
-	srand(std::chrono::system_clock::now().time_since_epoch().count());
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
 
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init();
+	ImGui::GetStyle().ScaleAllSizes(2.0f);
+
+	//default simulation settings for use in ui
 	settings.timeStep = 0.003f;
 	settings.numParticles = 2000;
-	settings.particleMass = 2.0;
-	settings.gravity = 9.0f;
+	settings.particleMass = 3.0;
+	settings.gravity = glm::vec3(0.0f, -9.81f, 0.0f);
 	settings.viscosity = 0.3f;
-	settings.smoothingRadius = 1.2;
+	settings.smoothingRadius = 2;
 	settings.stiffnessConstant = 300.0;
 	settings.restDensity = 1.0f;
 	settings.boundaryCollisionDamping = 0.5;
@@ -176,12 +180,23 @@ bool init()
 	settings.kernelViscosity = SmoothingKernelType::VISCOSITY;
 
 	simIterationsPerFrame = 1;
+	useUniformGrid = true;
 
 	//(half of) the size of the region being simulated
-	float boxWidth = 8.0f;
+	simBoxSize = 8.0f;
 	//float boxWidth = glm::max(sqrtf(settings.numParticles) / 3.0f, 1.0f);
 
-	if (solver.init(settings, 2 * boxWidth) == false)
+	paused = false;
+	step = false;
+
+	etSimulation = false;
+	etRender = false;
+	saveTimings = false;
+}
+
+bool initSim()
+{
+	if (solver.init(settings, 2 * simBoxSize) == false)
 	{
 		std::cerr << "failed to initialise solver, exiting" << std::endl;
 		return false;
@@ -189,12 +204,12 @@ bool init()
 
 	solver.setInitialParticlePositions(0.5f);
 	Boundary boundaries[6];
-	glm::vec3 p1 = glm::vec3(-boxWidth, 0.0f, 0.0f); //left
-	glm::vec3 p2 = glm::vec3(boxWidth, 0.0f, 0.0f); //right
-	glm::vec3 p3 = glm::vec3(0.0f, -boxWidth, 0.0f); //bottom
-	glm::vec3 p4 = glm::vec3(0.0f, boxWidth, 0.0f); //top
-	glm::vec3 p5 = glm::vec3(0.0f, 0.0f, -boxWidth); //back
-	glm::vec3 p6 = glm::vec3(0.0f, 0.0f, boxWidth); //front
+	glm::vec3 p1 = glm::vec3(-simBoxSize, 0.0f, 0.0f); //left
+	glm::vec3 p2 = glm::vec3(simBoxSize, 0.0f, 0.0f); //right
+	glm::vec3 p3 = glm::vec3(0.0f, -simBoxSize, 0.0f); //bottom
+	glm::vec3 p4 = glm::vec3(0.0f, simBoxSize, 0.0f); //top
+	glm::vec3 p5 = glm::vec3(0.0f, 0.0f, -simBoxSize); //back
+	glm::vec3 p6 = glm::vec3(0.0f, 0.0f, simBoxSize); //front
 
 	glm::vec3 n1 = glm::vec3(1.0f, 0.0f, 0.0f);
 	glm::vec3 n2 = glm::vec3(-1.0f, 0.0f, 0.0f);
@@ -223,74 +238,109 @@ bool init()
 	prevMousePosScreen = glm::vec2(0);
 	scrollSensitivity = 0.1f;
 
-#if ENABLE_TIMING_SPH || ENABLE_TIMING_GL
-	//setup cout to print timings to file
-	std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	char timeString[20];
-	std::strftime(&timeString[0], sizeof(timeString), "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
-
-	std::string fileName = "timings_" + std::to_string(settings.numParticles) + "_" + std::string(timeString) + ".csv";
-	timingFile = std::ofstream(fileName);
-	std::cout.rdbuf(timingFile.rdbuf());
-#if USE_UNIFORM_GRID
-	std::cout << "UG update cell particles, UG sort, UG update cell starts, SPH update predicted positions, SPH calculate inter particle values, SPH accelerate particles, render" << std::endl;
-#else
-	std::cout << "SPH update predicted positions, SPH calculate inter particle values, SPH accelerate particles, render" << std::endl;
-#endif
-#endif
-
 	prevFrameEndTime = std::chrono::high_resolution_clock::now();
+	
+	simulationInitialised = true;
 
 	return true;
 }
 
-bool update()
+void destroySim(); //only function that needs forward declaring...
+bool updateSim()
 {
-	//mouse interactions
-	//double mousex, mousey;
-	//int windowHeight = renderer.getWindowResolution().y;
-	//glfwGetCursorPos(window, &mousex, &mousey);
-	//glm::vec2 currentMousePosScreen = glm::vec2(mousex, windowHeight - mousey);
-	//glm::vec2 currentMousePosWorld = renderer.getviewMatrixScreenPixToWorld() * glm::vec4(currentMousePosScreen, 0.0f, 1.0f);
+	SPHConfiguration runningSettings = solver.getSettings();
 
-	//if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
-	//{
-	//	//want to pan in opposite direction to mouse drag, so the same point stays under the mouse
-	//	glm::vec2 dragDistanceScreen = prevMousePosScreen - currentMousePosScreen;
-	//	glm::vec2 dragDistanceWorld = glm::vec2(renderer.scalarScreenToWorld(dragDistanceScreen.x),
-	//		renderer.scalarScreenToWorld(dragDistanceScreen.y));
-	//	renderer.panView(dragDistanceWorld);
-	//}
+	if (ImGui::Button("Stop simulation"))
+	{
+		destroySim();
+		settings = runningSettings;
 
-	//if (scrollOccurred && scrollDeltaY != 0)
-	//{
-	//	float amount = glm::pow(2, scrollDeltaY * scrollSensitivity);
-	//	renderer.changeScaleFromPosition(amount, currentMousePosScreen);
-	//	scrollOccurred = false;
-	//}
+		return true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(paused ? "UnPause" : "Pause"))
+	{
+		paused = !paused;
+	}
 
-	//currentMousePosWorld = renderer.getviewMatrixScreenPixToWorld() * glm::vec4(currentMousePosScreen, 0.0f, 1.0f);
+	ImGui::SeparatorText("Simulation settings");
+	if (ImGui::DragFloat("Time step (seconds)", &runningSettings.timeStep, 0.0001f, 0.0001f, 1.0f))
+	{
+		solver.setTimeStep(runningSettings.timeStep);
+	}
 
-	//if (keyMap[GLFW_KEY_F].getHeld())
-	//{
-	//	bool attract = keyMap[GLFW_KEY_LEFT_SHIFT].getHeld();
-	//	userInteractParticles(glm::vec2(0), attract);
-	//}
+	if (ImGui::DragFloat("Particle mass", &runningSettings.particleMass, 0.005f, 0.001f, 10.0f))
+	{
+		solver.setParticleMass(runningSettings.particleMass);
+	}
 
-	//prevMousePosScreen = currentMousePosScreen;
+	if (ImGui::DragFloat3("Gravity", glm::value_ptr(runningSettings.gravity), 0.01f))
+	{
+		solver.setGravity(runningSettings.gravity);
+	}
 
-	////key interactions
-	//if (keyMap.at(GLFW_KEY_F).getHeld())
-	//{
-	//	float attractionRadius = 5.0f;
-	//	float attractionVelocity = 5.0f;
-	//	if (keyMap.at(GLFW_KEY_LEFT_SHIFT).getHeld())
-	//	{
-	//		attractionVelocity = -attractionVelocity;
-	//	}
+	if (ImGui::DragFloat("Viscosity", &runningSettings.viscosity, 0.005f, 0.001f, 10.0f))
+	{
+		solver.setViscosity(runningSettings.viscosity);
+	}
 
-	//	solver.userInteractParticles(currentMousePosWorld, attractionRadius, attractionVelocity);
-	//}
+	if (ImGui::DragFloat("Stiffness constant", &runningSettings.stiffnessConstant, 1.0f, 1.0f, 1000.0f))
+	{
+		solver.setStiffnessConstant(runningSettings.stiffnessConstant);
+	}
+
+	if (ImGui::DragFloat("Rest density", &runningSettings.restDensity, 0.005f, 0.001f, 20.0f))
+	{
+		solver.setRestDensity(runningSettings.restDensity);
+	}
+
+	if (ImGui::DragFloat("Boundary collision damping", &runningSettings.boundaryCollisionDamping, 0.001f, 0.0f, 1.0f))
+	{
+		solver.setBoundaryCollisionDamping(runningSettings.boundaryCollisionDamping);
+	}
+
+	int oldSimIterationsPerFrame = simIterationsPerFrame;
+	if (ImGui::InputInt("Sim iterations per frame", &simIterationsPerFrame))
+	{
+		//if timing enabled, only want to run 1 iteration per frame (to prevent display issues)
+		if (etSimulation) simIterationsPerFrame = oldSimIterationsPerFrame;
+
+		//cap iterations per frame to 1 or more
+		if (simIterationsPerFrame <= 0) simIterationsPerFrame = 1;
+	}
+
+	ImGui::Checkbox("Use uniform grid", &useUniformGrid);
+
+	ImGui::SeparatorText("Visual settings");
+	float camFov = glm::degrees(renderer.cam.getFieldOfView());
+	if (ImGui::SliderFloat("Field of view", &camFov, 10.0f, 110.0f))
+	{
+		renderer.cam.setFieldOfView(glm::radians(camFov));
+	}
+
+	if (useUniformGrid)
+	{
+		bool imguiShowUniformGrid = renderer.getShowUniformGrid();
+		if (ImGui::Checkbox("Show uniform grid", &imguiShowUniformGrid))
+		{
+			renderer.setShowUniformGrid(imguiShowUniformGrid);
+		}
+	}
+	else
+	{
+		renderer.setShowUniformGrid(false);
+	}
+
+	ImGui::SeparatorText("Timing");
+	if (ImGui::Checkbox("Enable timing simulation", &etSimulation))
+	{
+		if (etSimulation)
+		{
+			//the only sensible solution I could come up with to not have issues displaying/saving timings
+			simIterationsPerFrame = 1;
+		}
+	}
+	ImGui::Checkbox("Enable timing render", &etRender);
 
 	//camera controls
 	glm::vec3 moveInputs = glm::vec3(0.0f);
@@ -303,51 +353,170 @@ bool update()
 	if (keyMap.at(GLFW_KEY_D).getHeld()) moveInputs.x += 1;
 	if (keyMap.at(GLFW_KEY_Q).getHeld()) moveInputs.y -= 1;
 	if (keyMap.at(GLFW_KEY_E).getHeld()) moveInputs.y += 1;
-	
+
 	if (keyMap.at(GLFW_KEY_UP).getHeld()) lookInputs.x += 1;
 	if (keyMap.at(GLFW_KEY_DOWN).getHeld()) lookInputs.x -= 1;
 	if (keyMap.at(GLFW_KEY_LEFT).getHeld()) lookInputs.y -= 1;
 	if (keyMap.at(GLFW_KEY_RIGHT).getHeld()) lookInputs.y += 1;
 
 	if (keyMap.at(GLFW_KEY_C).getHeld()) moveMult = 4.0f;
+	if (keyMap.at(GLFW_KEY_P).getReleased())
+		paused = !paused;
+	if (keyMap.at(GLFW_KEY_O).getReleased()) step = true;
+
+	for (auto it = keyMap.begin(); it != keyMap.end(); it++)
+	{
+		Key& k = it->second;
+		k.updateStates();
+	}
 
 	float moveSpeed = 5.0f * moveMult * frameDuration;
 	float lookSpeed = glm::pi<float>() * frameDuration;
-	float camYaw = renderer.getCamAngles().y;
+	float camYaw = renderer.cam.getAngles().y;
 
 	renderer.updateCam(glm::rotateY(moveInputs, -camYaw - glm::radians(90.0f)) * moveSpeed, lookInputs * lookSpeed);
 
-
-
 	//simulation
-#if USE_UNIFORM_GRID
-	solver.UGUpdate(simIterationsPerFrame);
-#else
-	solver.update(simIterationsPerFrame);
-#endif
+	if (paused == false || step == true)
+	{
+		if (useUniformGrid) solver.UGUpdate(simIterationsPerFrame, etSimulation, timingValues);
+		else solver.update(simIterationsPerFrame, etSimulation, timingValues);
+
+		step = false;
+	}
 
 	//visualisation
-	renderer.visualise(solver);
+	renderer.visualise(solver, etRender, timingValues);
 
-#if ENABLE_TIMING_SPH || ENABLE_TIMING_GL
-	std::cout << std::endl;
-#endif
 
+	//timing
 	std::chrono::high_resolution_clock::time_point currentFrameEndTime = std::chrono::high_resolution_clock::now();
 	frameDuration = (currentFrameEndTime - prevFrameEndTime).count() * 1e-9;
 	prevFrameEndTime = currentFrameEndTime;
+	timingValues.push_back({ "Whole Frame", frameDuration });
 
-#if !(ENABLE_TIMING_SPH || ENABLE_TIMING_GL)
-	std::cout << std::to_string(frameDuration) << '\r';
-#endif
+	if (ImGui::BeginTable("Timings", timingValues.size()))
+	{
+		//create header row
+		ImGui::TableNextRow();
+		for (int col = 0; col < timingValues.size(); col++)
+		{
+			ImGui::TableSetColumnIndex(col);
+			ImGui::Text(timingValues[col].first.c_str());
+		}
+
+		//write values in next row
+		ImGui::TableNextRow();
+		for (int col = 0; col < timingValues.size(); col++)
+		{
+			ImGui::TableSetColumnIndex(col);
+			ImGui::Text(std::to_string(timingValues[col].second).c_str());
+		}
+
+		ImGui::EndTable();
+	}
+
+	timingValues.clear();
+}
+
+bool update()
+{
+	//ImGui new frame
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+	
+	ImGui::Begin("Waterfall 3D");
+
+	if (simulationInitialised)
+	{
+		//run simulation, display options for during simulation running
+		updateSim();
+	}
+	else
+	{
+		//display options for simulation config
+		if (ImGui::Button("Start simulation"))
+		{
+			if (!initSim())
+			{
+				return false;
+			}
+		}
+
+		ImGui::SeparatorText("Simulation settings");
+		//can change while running, but are also here for being set before initialising simulation
+		if (ImGui::InputFloat("Time step (seconds)", &settings.timeStep))
+		{
+			settings.timeStep = glm::max(settings.timeStep, 0.00001f);
+		}
+
+		if (ImGui::InputFloat("Particle mass", &settings.particleMass))
+		{
+			settings.particleMass = glm::max(settings.particleMass, 0.001f);
+		}
+
+		ImGui::InputFloat3("Gravity", glm::value_ptr(settings.gravity));
+
+		if (ImGui::InputFloat("Viscosity", &settings.viscosity))
+		{
+			settings.viscosity = glm::max(settings.viscosity, 0.001f);
+		}
+
+		if (ImGui::InputFloat("Stiffness constant", &settings.stiffnessConstant))
+		{
+			settings.stiffnessConstant = glm::max(settings.stiffnessConstant, 0.001f);
+		}
+
+		if (ImGui::InputFloat("Rest density", &settings.restDensity))
+		{
+			settings.restDensity = glm::max(settings.restDensity, 0.001f);
+		}
+
+		if (ImGui::InputFloat("Boundary collision damping", &settings.restDensity))
+		{
+			settings.restDensity = glm::max(settings.restDensity, 0.001f);
+		}
+
+		//cannot change while running
+		if (ImGui::InputInt("Number of particles", &settings.numParticles))
+		{
+			settings.numParticles = glm::max(settings.numParticles, 1);
+		}
+
+		if (ImGui::InputFloat("Smoothing radius", &settings.smoothingRadius))
+		{
+			settings.smoothingRadius = glm::max(settings.smoothingRadius, 0.001f);
+		}
+	}
+
+	ImGui::End();
+
+	//ImGui rendering
+	ImGui::Render();
+	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 	return true;
 }
 
+void destroySim()
+{
+	if (simulationInitialised)
+	{
+		solver.destroy();
+		renderer.destroy();
+
+		simulationInitialised = false;
+	}
+}
+
 void destroy()
 {
-	solver.destroy();
-	renderer.destroy();
+	destroySim();
+
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 }
 
 int main()
@@ -355,18 +524,22 @@ int main()
 	window = initGL();
 	if (window == nullptr) return -1;
 
-	if (!init())
-	{
-		return -1;
-	}
+	initImGui();
 
 	while (!glfwWindowShouldClose(window))
 	{
 		//process key presses, mouse movements, window resizes etc.
 		glfwPollEvents();
 		
+		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+
 		//make things happen
-		update();
+		if (!update())
+		{
+			//there was an error
+			break;
+		}
 
 		glfwSwapBuffers(window);
 	}
