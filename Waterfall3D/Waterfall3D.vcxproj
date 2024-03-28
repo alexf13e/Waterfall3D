@@ -77,7 +77,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;C:\Users\Alex\Documents\Uni\Y3\project\code\include\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -94,7 +94,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;C:\Users\Alex\Documents\Uni\Y3\project\code\include\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -111,7 +111,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;C:\Users\Alex\Documents\Uni\Y3\project\code\include\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -128,7 +128,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\Alex\Documents\Uni\Y3\project\code\include;C:\Users\Alex\Documents\Uni\Y3\project\code\Waterfall3D\Waterfall3D\headers;C:\Users\Alex\Documents\Uni\Y3\project\code\include\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -140,15 +140,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="source\glad.c" />
-    <ClCompile Include="source\imgui\imgui.cpp" />
-    <ClCompile Include="source\imgui\imgui_demo.cpp" />
-    <ClCompile Include="source\imgui\imgui_draw.cpp" />
-    <ClCompile Include="source\imgui\imgui_impl_glfw.cpp" />
-    <ClCompile Include="source\imgui\imgui_impl_opengl3.cpp" />
-    <ClCompile Include="source\imgui\imgui_stdlib.cpp" />
-    <ClCompile Include="source\imgui\imgui_tables.cpp" />
-    <ClCompile Include="source\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\..\src\glad.c" />
+    <ClCompile Include="..\..\src\imgui\imgui.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_demo.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_impl_glfw.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_stdlib.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\..\src\imgui\imgui_widgets.cpp" />
     <ClCompile Include="source\Key.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\ShaderProgram.cpp" />

@@ -488,6 +488,11 @@ bool update()
 		{
 			settings.smoothingRadius = glm::max(settings.smoothingRadius, 0.001f);
 		}
+
+		if (ImGui::InputFloat("Box width", &simBoxSize))
+		{
+			simBoxSize = glm::max(simBoxSize, 1.0f);
+		}
 	}
 
 	ImGui::End();

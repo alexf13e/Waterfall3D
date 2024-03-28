@@ -15,9 +15,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\glad.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\Key.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -27,28 +24,31 @@
     <ClCompile Include="source\ShaderProgram.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_widgets.cpp">
+    <ClCompile Include="..\..\src\glad.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_demo.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_demo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_draw.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_draw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_impl_glfw.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_impl_glfw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_impl_opengl3.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_impl_opengl3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_stdlib.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_stdlib.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\imgui\imgui_tables.cpp">
+    <ClCompile Include="..\..\src\imgui\imgui_tables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
