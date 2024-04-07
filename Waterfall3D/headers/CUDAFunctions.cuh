@@ -8,6 +8,7 @@
 
 #include "SPH.cuh"
 #include "MetaballSampler.cuh"
+#include "Renderer.cuh"
 
 namespace CUDADeviceFunctions
 {
@@ -33,6 +34,9 @@ namespace CUDADeviceFunctions
 
 	__device__ glm::vec3 UGCalculateParticleAcceleration(int particleIndex, SPHSimulationData simData,
 		SPHConfiguration simSettings, UniformGridData ugData, UniformGridSettings ugSettings);
+
+	__device__ glm::vec3 getRayDirection(int threadIndex, int textureWidth, int textureHeight, float fieldOfView,
+		float pitch, float yaw);
 }
 
 namespace CUDAKernels
@@ -61,8 +65,7 @@ namespace CUDAKernels
 		float attractionRadius, float attractionVelocity);
 
 	__global__ void calculateMetaballSamples(SPHSimulationData simdata, SPHConfiguration simSettings,
-		UniformGridData ugData, UniformGridSettings ugSettings, MetaballSampler mbSampler,
-		glm::mat4 matScreenNormToWorld);
+		UniformGridData ugData, UniformGridSettings ugSettings, MetaballSampler mbSampler, Camera cam);
 }
 
 #endif // !CUDA_FUNCTIONS_H

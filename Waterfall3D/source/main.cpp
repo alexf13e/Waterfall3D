@@ -14,15 +14,14 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
-#include "DebugOptions.h"
 #include "SPH.cuh"
 #include "CUDAFunctions.cuh"
 #include "Renderer.cuh"
 #include "Key.h"
 
 
-constexpr float WINDOW_WIDTH = 1024;
-constexpr float WINDOW_HEIGHT = 1024;
+int windowWidth = 1280;
+int windowHeight = 720;
 GLFWwindow* window;
 
 SPHConfiguration settings;
@@ -32,6 +31,7 @@ Renderer renderer;
 int simIterationsPerFrame;
 bool useUniformGrid;
 float simBoxSize;
+Renderer::RenderMode renderMode;
 
 glm::vec2 prevMousePosScreen;
 float scrollSensitivity;
@@ -95,9 +95,9 @@ bool paused, step;
 
 static void windowResize(GLFWwindow* window, int width, int height)
 {
-	int widthpx, heightpx;
-	glfwGetFramebufferSize(window, &widthpx, &heightpx);
-	renderer.updateWindowRes(widthpx, heightpx);
+	windowWidth = width;
+	windowHeight = height;
+	renderer.updateWindowRes(width, height);
 }
 
 static void keyPress(GLFWwindow* window, int key, int scancode, int action, int mods)
@@ -133,7 +133,7 @@ GLFWwindow* initGL()
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Water 2D", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Water 2D", NULL, NULL);
 	if (window == NULL)
 	{
 		std::cout << "Failed to create GLFW window" << std::endl;
@@ -185,6 +185,7 @@ void initImGui()
 	//(half of) the size of the region being simulated
 	simBoxSize = 8.0f;
 	//float boxWidth = glm::max(sqrtf(settings.numParticles) / 3.0f, 1.0f);
+	renderMode = Renderer::RenderMode::POINTS;
 
 	paused = false;
 	step = false;
@@ -228,7 +229,7 @@ bool initSim()
 	solver.setWorldBoundaries(boundaries, 6);
 
 
-	if (renderer.init(WINDOW_WIDTH, WINDOW_HEIGHT, glm::vec4(0.5f, 0.6f, 1.0f, 1.0f), glm::vec4(0.2f, 0.2f, 1.0f, 1.0f),
+	if (renderer.init(windowWidth, windowHeight, glm::vec4(0.5f, 0.6f, 1.0f, 1.0f), glm::vec4(0.2f, 0.2f, 1.0f, 1.0f),
 		solver.getSettings(), solver.getSimData(), solver.getUniformGrid()) == false)
 	{
 		std::cerr << "failed to initialise renderer, exiting" << std::endl;
@@ -310,9 +311,13 @@ bool updateSim()
 	}
 
 	ImGui::Checkbox("Use uniform grid", &useUniformGrid);
+	if (!useUniformGrid)
+	{
+		renderMode = Renderer::RenderMode::POINTS;
+	}
 
 	ImGui::SeparatorText("Visual settings");
-	float camFov = glm::degrees(renderer.cam.getFieldOfView());
+	float camFov = glm::degrees(renderer.cam.fov);
 	if (ImGui::SliderFloat("Field of view", &camFov, 10.0f, 110.0f))
 	{
 		renderer.cam.setFieldOfView(glm::radians(camFov));
@@ -330,6 +335,30 @@ bool updateSim()
 	{
 		renderer.setShowUniformGrid(false);
 	}
+
+	if (useUniformGrid)
+	{
+		bool enableRaymarch = renderMode == Renderer::RenderMode::METABALLS;
+		if (ImGui::Checkbox("Enable raymarch rendering", &enableRaymarch))
+		{
+			if (enableRaymarch)
+			{
+				renderMode = Renderer::RenderMode::METABALLS;
+			}
+			else
+			{
+				renderMode = Renderer::RenderMode::POINTS;
+			}
+		}
+
+		if (enableRaymarch)
+		{
+			ImGui::SliderInt("Raymarch iterations", &renderer.mbSampler.maxIterations, 1, 50);
+			ImGui::SliderFloat("Metaball radius", &renderer.mbSampler.boundaryRadius, 0.1f, 2.0f);
+		}
+	}
+
+	
 
 	ImGui::SeparatorText("Timing");
 	if (ImGui::Checkbox("Enable timing simulation", &etSimulation))
@@ -372,8 +401,9 @@ bool updateSim()
 
 	float moveSpeed = 5.0f * moveMult * frameDuration;
 	float lookSpeed = glm::pi<float>() * frameDuration;
-	float camYaw = renderer.cam.getAngles().y;
+	float camYaw = renderer.cam.angles.y;
 
+	//move controls assume forward is -Z, need to adjust for yaw where 0 is +X
 	renderer.updateCam(glm::rotateY(moveInputs, -camYaw - glm::radians(90.0f)) * moveSpeed, lookInputs * lookSpeed);
 
 	//simulation
@@ -386,7 +416,7 @@ bool updateSim()
 	}
 
 	//visualisation
-	renderer.visualise(solver, etRender, timingValues);
+	renderer.visualise(solver, etRender, timingValues, renderMode);
 
 
 	//timing

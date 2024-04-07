@@ -163,8 +163,7 @@
     <None Include="shaders\basicProjection.vert" />
     <None Include="shaders\fullScreenTri.vert" />
     <None Include="shaders\metaball.frag" />
-    <None Include="shaders\metaball.vert" />
-    <None Include="shaders\particle.frag" />
+    <CudaCompile Include="source\MetaballSampler.cu" />
     <CudaCompile Include="source\Renderer.cu">
       <FileType>Document</FileType>
     </CudaCompile>
@@ -176,7 +175,6 @@
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="headers\DebugOptions.h" />
     <ClInclude Include="headers\Key.h" />
     <ClInclude Include="headers\ShaderProgram.h" />
   </ItemGroup>

@@ -3,6 +3,7 @@
 
 #include <device_launch_parameters.h>
 #include "glm/gtc/constants.hpp"
+#include "glm/gtx/vector_angle.hpp"
 
 
 namespace CUDADeviceFunctions
@@ -266,6 +267,35 @@ namespace CUDADeviceFunctions
 
 		return particleAcceleration;
 	}
+
+	__device__ glm::vec3 getRayDirection(int threadIndex, int textureWidth, int textureHeight, float fieldOfView,
+		float pitch, float yaw)
+	{
+		//calculate texture coordinate of this thread
+		float xPix = threadIndex % textureWidth;
+		float yPix = threadIndex / textureWidth;
+
+		//ray target generation https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays.html
+		//target position of ray in 2D grid of pixels 1 unit in front of camera
+		float texAR = (float)textureWidth / textureHeight;
+		glm::vec2 gridTarget = glm::vec2((xPix + 0.5f) / textureWidth, (yPix + 0.5f) / textureHeight) * 2.0f - 1.0f;
+		gridTarget.x *= texAR;
+		gridTarget *= glm::tan(fieldOfView / 2.0f);
+		glm::vec3 worldTarget = glm::vec3(gridTarget, -1.0f);
+
+		//find rotation matrix to rotate from grid (forward = -Z) to camera (forward = cam.direction)
+		glm::vec3 gridRight = glm::vec3(1.0f, 0.0f, 0.0f);
+		glm::vec3 gridUp = glm::vec3(0.0f, 1.0f, 0.0f);
+		glm::mat4 I = glm::mat4(1.0f);
+		glm::mat4 matPitch = glm::rotate(I, pitch, gridRight);
+		glm::mat4 matYaw = glm::rotate(I, -yaw - glm::half_pi<float>(), gridUp);
+		glm::mat4 matGridRotation = matYaw * matPitch;
+
+		glm::vec3 rayDirection = matGridRotation * glm::vec4(worldTarget, 1.0f);
+		rayDirection = glm::normalize(rayDirection);
+
+		return rayDirection;
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -479,59 +509,151 @@ namespace CUDAKernels
 		}
 	}
 
-	//__global__ void calculateMetaballSamples(SPHSimulationData simdata, SPHConfiguration simSettings,
-	//	UniformGridData ugData, UniformGridSettings ugSettings, MetaballSampler mbSampler,
-	//	glm::mat4 matScreenNormToWorld)
-	//{
-	//	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	//	if (i >= mbSampler.numSamplePoints) return;
+	__global__ void calculateMetaballSamples(SPHSimulationData simdata, SPHConfiguration simSettings,
+		UniformGridData ugData, UniformGridSettings ugSettings, MetaballSampler mbSampler,
+		Camera cam)
+	{
+		int i = blockIdx.x * blockDim.x + threadIdx.x;
+		if (i >= mbSampler.textureWidth * mbSampler.textureHeight) return;
 
-	//	glm::vec4& sampleData = mbSampler.d_sampleData[i];
-	//	glm::vec2 worldSamplePos = matScreenNormToWorld * glm::vec4(sampleData.x, sampleData.y, 0.0f, 1.0f);
-	//	
-	//	float sampleValue = 0;
-	//	float sampleDensity = 0;
+		//get origin and direction of ray
+		glm::vec3 worldSamplePos = cam.position;
+		glm::vec3 rayDirection = CUDADeviceFunctions::getRayDirection(i, mbSampler.textureWidth, mbSampler.textureHeight,
+			cam.fov, cam.angles.x, cam.angles.y);
 
-	//	for (int dy = -1; dy <= 1; dy++)
-	//	{
-	//		for (int dx = -1; dx <= 1; dx++)
-	//		{
-	//			glm::vec2 tempPos = worldSamplePos + glm::vec2(dx, dy) * ugSettings.cellSize;
-	//			int cellID = CUDADeviceFunctions::UGCellIDFromPosition(tempPos, ugSettings.cellSize, ugSettings.dimCells);
-	//			if (cellID == -1)
-	//			{
-	//				//-1 is returned when cell would be outside of grid area
-	//				continue;
-	//			}
+		glm::vec3 skyColour = glm::vec3(0.7f, 0.7f, 1.0f) * (rayDirection.y + 1.0f) / 2.0f;
 
-	//			int cellStart = ugData.d_cellStarts[cellID];
-	//			if (cellStart == -1)
-	//			{
-	//				//other cell has no particles in it
-	//				continue;
-	//			}
+		//if ray is starting outside of the uniform grid
+		if (CUDADeviceFunctions::UGCellIDFromPosition(worldSamplePos, ugSettings.cellSize, ugSettings.dimCells) == -1)
+		{
+			//move ray forward until inside uniform grid, or return sky colour if grid is never hit
+			//box intersection check: https://tavianator.com/2022/ray_box_boundary.html
+			float boxSize = ugSettings.dimCells * ugSettings.cellSize;
+			glm::vec3 boxMin = glm::vec3(-boxSize * 0.5f);
+			glm::vec3 boxMax = glm::vec3(boxSize * 0.5f);
 
-	//			for (int j = cellStart; j < simSettings.numParticles; j++) //for every particle in this cell
-	//			{
-	//				if (ugData.d_cellIDs[j] != cellID) break;
+			float tmin = 0.0f;
+			float tmax = FLT_MAX;
 
-	//				int particleIndex = ugData.d_particleIDs[j];
-	//				glm::vec2& particlePos = simdata.d_positions[particleIndex];
+			glm::vec3 rayDirectionInverse = 1.0f / rayDirection;
+			float t1 = (boxMin.x - worldSamplePos.x) * rayDirectionInverse.x;
+			float t2 = (boxMax.x - worldSamplePos.x) * rayDirectionInverse.x;
+			tmin = glm::max(tmin, glm::min(t1, t2));
+			tmax = glm::min(tmax, glm::max(t1, t2));
 
-	//				float dist = glm::distance(worldSamplePos, particlePos);
-	//				float sv = (dist - mbSampler.r0) / (mbSampler.r1 - mbSampler.r0);
-	//				if (sv < 0) sv = 0;
-	//				if (sv > 1) sv = 1;
-	//				sampleValue += sv;
+			t1 = (boxMin.y - worldSamplePos.y) * rayDirectionInverse.y;
+			t2 = (boxMax.y - worldSamplePos.y) * rayDirectionInverse.y;
+			tmin = glm::max(tmin, glm::min(t1, t2));
+			tmax = glm::min(tmax, glm::max(t1, t2));
 
-	//				float kernelValue = CUDADeviceFunctions::SmoothingKernels::getKernelValue(
-	//					simSettings.kernelPressure, dist, simSettings.smoothingRadius);
-	//				sampleDensity += kernelValue;
-	//			}
-	//		}
-	//	}
+			t1 = (boxMin.z - worldSamplePos.z) * rayDirectionInverse.z;
+			t2 = (boxMax.z - worldSamplePos.z) * rayDirectionInverse.z;
+			tmin = glm::max(tmin, glm::min(t1, t2));
+			tmax = glm::min(tmax, glm::max(t1, t2));
 
-	//	sampleData.z = sampleValue;// *0.2f;
-	//	sampleData.w = sampleDensity * simSettings.particleMass;
-	//}
+			if (tmin > tmax)
+			{
+				//no intersection
+				mbSampler.d_rayData[i] = glm::vec4(skyColour, 0.0f);
+				return;
+			}
+
+			//nearest intersection is tmin
+			worldSamplePos = worldSamplePos + rayDirection * (tmin + 0.001f);
+		}
+
+
+		glm::vec3 lightDir = glm::vec3(0.19245f, -0.96225f, -0.19245f);
+
+		float sampleValue = 0;
+		float sampleDensity = 0;
+
+		//while the ray is still within the uniform grid
+		int iterations = mbSampler.maxIterations;
+		while (CUDADeviceFunctions::UGCellIDFromPosition(worldSamplePos, ugSettings.cellSize, ugSettings.dimCells) != -1 && iterations > 0)
+		{
+			//evaluate metaball function at worldSamplePos by iterating over nearby particles which can contribute and
+			//finding the smallest safe distance to move the ray along
+
+			float minSafeDist = FLT_MAX;
+			glm::vec3 hitParticlePos;
+
+			for (int dz = -1; dz <= 1; dz++)
+			for (int dy = -1; dy <= 1; dy++)
+			for (int dx = -1; dx <= 1; dx++)
+			{
+				glm::vec3 tempPos = worldSamplePos + glm::vec3(dx, dy, dz) * ugSettings.cellSize;
+				int cellID = CUDADeviceFunctions::UGCellIDFromPosition(tempPos, ugSettings.cellSize, ugSettings.dimCells);
+				if (cellID == -1)
+				{
+					//-1 is returned when cell would be outside of grid area
+					continue;
+				}
+
+				int cellStart = ugData.d_cellStarts[cellID];
+				if (cellStart == -1)
+				{
+					//other cell has no particles in it
+					continue;
+				}
+
+				for (int j = cellStart; j < simSettings.numParticles; j++) //for every particle in this cell
+				{
+					if (ugData.d_cellIDs[j] != cellID) break;
+
+					int particleIndex = ugData.d_particleIDs[j];
+					glm::vec3& particlePos = simdata.d_positions[particleIndex];
+
+					float dist = glm::distance(worldSamplePos, particlePos) - mbSampler.boundaryRadius;
+					if (dist < minSafeDist)
+					{
+						hitParticlePos = particlePos;
+						minSafeDist = dist;
+					}
+					/*float sv = (dist - mbSampler.r0) / (mbSampler.r1 - mbSampler.r0);
+					if (sv < 0) sv = 0;
+					if (sv > 1) sv = 1;
+					sampleValue += sv;
+
+					float kernelValue = CUDADeviceFunctions::SmoothingKernels::getKernelValue(
+						simSettings.kernelPressure, dist, simSettings.smoothingRadius);
+					sampleDensity += kernelValue;*/
+				}
+			}
+
+			if (minSafeDist == FLT_MAX)
+			{
+				//no particles were in the 3x3x3 cells, move along to the next cell which the ray would hit
+				//future improvement to find next cell in ray path (e.g. DDA), for now just move a set distance
+				worldSamplePos += ugSettings.cellSize * rayDirection;
+
+			}
+			else if (minSafeDist < mbSampler.hitEpsilon)
+			{
+				//hit a particle
+				glm::vec3 particleNormal = glm::normalize(worldSamplePos - hitParticlePos);
+				float lightMult = glm::dot(-particleNormal, lightDir);
+				lightMult = glm::max(lightMult, 0.2f);
+				mbSampler.d_rayData[i] = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f) * lightMult;
+				return;
+			}
+			else
+			{
+				worldSamplePos += minSafeDist * rayDirection;
+			}
+
+			iterations--;
+		}
+
+		if (iterations == 0)
+		{
+			float dist = glm::distance(worldSamplePos, cam.position) / 20.0f;
+			mbSampler.d_rayData[i] = glm::vec4(dist, dist, dist, 0.0f);
+		}
+		else
+		{
+			//exited the uniform grid without hitting any sphere, return sky colour
+			mbSampler.d_rayData[i] = glm::vec4(skyColour, 0.0f);
+		}
+	}
 }

@@ -5,7 +5,6 @@
 #include <vector>
 #include <string>
 
-#include "DebugOptions.h"
 #include "glm/glm.hpp"
 #include <vector_types.h>
 #include "cuda_runtime.h"

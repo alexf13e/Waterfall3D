@@ -6,15 +6,30 @@
 #include "glad/glad.h" //even though its not used here, it is used elsewhere and glad gets upset if cuda_gl_interop is included before it.
 #include "cuda_gl_interop.h"
 
-struct MetaballSampler
+class MetaballSampler
 {
-	unsigned int vao_samplePoints, vbo_samplePoints, ebo_samplePoints;
+	unsigned int vao_fullScreenTri;
 
-	cudaGraphicsResource* cuda_samplePointsBuffer;
-	glm::vec4* d_sampleData;
+	cudaGraphicsResource* cuda_rayDataBuffer;
 
-	int numSamplePoints, numTriIndices;
-	float r1, r0;
+	bool initialised = false;
+
+public:
+	unsigned int gl_rayDataSSBO;
+	glm::vec4* d_rayData;
+	int textureWidth, textureHeight;
+	float boundaryRadius, hitEpsilon;
+	bool updateFragTexSize = false;
+	int maxIterations;
+
+	unsigned int getVAOFullScreenTri() { return vao_fullScreenTri; }
+	
+	bool init(int textureWidth, int textureHeight, float boundaryRadius, int maxIterations);
+	bool updateResolution(int width, int height);
+	void destroy();
+	
+	void mapCudaResources();
+	void unmapCudaResources();
 };
 
 #endif

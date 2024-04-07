@@ -57,13 +57,8 @@
     <None Include="shaders\basicProjection.vert" />
     <None Include="shaders\fullScreenTri.vert" />
     <None Include="shaders\metaball.frag" />
-    <None Include="shaders\metaball.vert" />
-    <None Include="shaders\particle.frag" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="headers\DebugOptions.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="headers\Key.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -80,6 +75,7 @@
     <CudaCompile Include="source\Renderer.cu" />
     <CudaCompile Include="source\SPH.cu" />
     <CudaCompile Include="source\CUDAFunctions.cu" />
+    <CudaCompile Include="source\MetaballSampler.cu" />
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="imgui.natvis" />

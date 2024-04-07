@@ -121,9 +121,21 @@ void UniformGrid::update(const SPHSimulationData& simData, const SPHConfiguratio
 			thrust::device_ptr<int>(data.d_cellIDs + simSettings.numParticles),
 			thrust::device_ptr<int>(data.d_particleIDs));
 
+		err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellParticles: " << cudaGetErrorName(err) << std::endl;
+		}
+
 		//update cellStarts
 		//need to be initialised as having no cells, then ones which do have cells will be overwritten
 		cudaMemset(data.d_cellStarts, -1, sizeof(int) * settings.numCells);
+
+		err = cudaGetLastError();
+		if (err != cudaSuccess)
+		{
+			std::cerr << "CUDA error in UGUpdateCellParticles: " << cudaGetErrorName(err) << std::endl;
+		}
 
 		CUDAKernels::UGUpdateCellStarts << <numBlocks, blockSize >> > (simSettings, data);
 		err = cudaGetLastError();
