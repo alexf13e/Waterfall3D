@@ -60,7 +60,7 @@ class Renderer
 	bool initialised = false;
 
 public:
-	enum RenderMode { POINTS, METABALLS };
+	enum RenderMode { POINTS, RAYMARCH };
 	Camera cam;
 	MetaballSampler mbSampler;
 

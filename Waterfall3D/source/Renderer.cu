@@ -2,6 +2,7 @@
 #include "Renderer.cuh"
 
 #include <iostream>
+#include <chrono>
 
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
@@ -9,6 +10,7 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "cuda_runtime.h"
+#include "cuda_profiler_api.h"
 
 #include "CUDAFunctions.cuh"
 
@@ -215,15 +217,15 @@ void Renderer::visualise(SPHSolver& solver, bool enableTiming, std::vector<std::
 		cam.clearUpdated();
 	}
 
-	if (enableTiming)
-	{
-		//https://www.lighthouse3d.com/tutorials/opengl-timer-query/
-		glBeginQuery(GL_TIME_ELAPSED, timeQueryID);
-	}
-
 	switch (renderMode)
 	{
 	case POINTS:
+		if (enableTiming)
+		{
+			//https://www.lighthouse3d.com/tutorials/opengl-timer-query/
+			glBeginQuery(GL_TIME_ELAPSED, timeQueryID);
+		}
+
 		glUseProgram(this->shWorldToScreen.getID());
 		//draw particles predicted positions
 		/*glBindVertexArray(solver.getSimData().gl_predictedPositionsVAO);
@@ -236,26 +238,57 @@ void Renderer::visualise(SPHSolver& solver, bool enableTiming, std::vector<std::
 		glDrawArrays(GL_POINTS, 0, solver.getSettings().numParticles);
 		break;
 
-	case METABALLS:
+	case RAYMARCH:
 		//call cuda to update density values at metaball grid points
-		mbSampler.mapCudaResources();
-		solver.mapCudaResources();
-		int numPixels = mbSampler.textureWidth * mbSampler.textureHeight;
-		int blockSize = glm::min(numPixels, 1024);
-		int numBlocks = (numPixels - 1) / blockSize + 1;
-
-		CUDAKernels::calculateMetaballSamples << <numBlocks, blockSize >> > (solver.getSimData(), solver.getSettings(),
-			solver.getUniformGrid().getData(), solver.getUniformGrid().getSettings(), mbSampler, cam);
-		solver.unmapCudaResources();
-		mbSampler.unmapCudaResources();
-
-		
-		
-
-		cudaError_t err = cudaGetLastError();
-		if (err != cudaSuccess)
+		if (enableTiming)
 		{
-			std::cerr << "CUDA error in renderer visualise with metaballs: " << cudaGetErrorName(err) << std::endl;
+			mbSampler.mapCudaResources();
+			solver.mapCudaResources();
+			int numPixels = mbSampler.textureWidth * mbSampler.textureHeight;
+			int blockSize = glm::min(numPixels, 1024);
+			int numBlocks = (numPixels - 1) / blockSize + 1;
+
+			std::chrono::steady_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+			CUDAKernels::calculateRaymarchSamples << <numBlocks, blockSize >> > (solver.getSimData(), solver.getSettings(),
+				solver.getUniformGrid().getData(), solver.getUniformGrid().getSettings(), mbSampler, cam);
+			cudaDeviceSynchronize();
+			std::chrono::steady_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+			float dt = (t2 - t1).count() * 1e-9;
+			timingValues.push_back({ "calculateRaymarchSamples", dt });
+
+			solver.unmapCudaResources();
+			mbSampler.unmapCudaResources();
+
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in renderer visualise with raymarch: " << cudaGetErrorName(err) << std::endl;
+			}
+
+			//don't want metaball kernel counted towards shader render time
+			glBeginQuery(GL_TIME_ELAPSED, timeQueryID);
+		}
+		else
+		{
+			mbSampler.mapCudaResources();
+			solver.mapCudaResources();
+			int numPixels = mbSampler.textureWidth * mbSampler.textureHeight;
+			int blockSize = glm::min(numPixels, 1024);
+			int numBlocks = (numPixels - 1) / blockSize + 1;
+
+			//cudaProfilerStart();
+			CUDAKernels::calculateRaymarchSamples << <numBlocks, blockSize >> > (solver.getSimData(), solver.getSettings(),
+				solver.getUniformGrid().getData(), solver.getUniformGrid().getSettings(), mbSampler, cam);
+			//cudaProfilerStop();
+
+			solver.unmapCudaResources();
+			mbSampler.unmapCudaResources();
+
+			cudaError_t err = cudaGetLastError();
+			if (err != cudaSuccess)
+			{
+				std::cerr << "CUDA error in renderer visualise with raymarch: " << cudaGetErrorName(err) << std::endl;
+			}
 		}
 
 		//render metaball texture to fullscreen tri

@@ -64,7 +64,7 @@ namespace CUDAKernels
 	__global__ void userInteractParticles(SPHSimulationData simData, int numParticles, glm::vec2 attractionPoint,
 		float attractionRadius, float attractionVelocity);
 
-	__global__ void calculateMetaballSamples(SPHSimulationData simdata, SPHConfiguration simSettings,
+	__global__ void calculateRaymarchSamples(SPHSimulationData simdata, SPHConfiguration simSettings,
 		UniformGridData ugData, UniformGridSettings ugSettings, MetaballSampler mbSampler, Camera cam);
 }
 

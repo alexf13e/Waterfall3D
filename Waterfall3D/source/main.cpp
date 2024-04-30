@@ -20,8 +20,8 @@
 #include "Key.h"
 
 
-int windowWidth = 1280;
-int windowHeight = 720;
+int windowWidth = 1920;
+int windowHeight = 1080;
 GLFWwindow* window;
 
 SPHConfiguration settings;
@@ -133,7 +133,7 @@ GLFWwindow* initGL()
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Water 2D", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "Water 3D", NULL, NULL);
 	if (window == NULL)
 	{
 		std::cout << "Failed to create GLFW window" << std::endl;
@@ -264,6 +264,13 @@ bool updateSim()
 		paused = !paused;
 	}
 
+	glm::vec3 camPos = renderer.cam.position;
+	if (ImGui::InputFloat3("Camera Position", glm::value_ptr(camPos)))
+	{
+		renderer.cam.updatePosition(camPos - renderer.cam.position);
+	}
+	ImGui::LabelText("Camera Direction", (std::to_string(renderer.cam.direction.x) + ", " + std::to_string(renderer.cam.direction.y) + ", " + std::to_string(renderer.cam.direction.z)).c_str());
+
 	ImGui::SeparatorText("Simulation settings");
 	if (ImGui::DragFloat("Time step (seconds)", &runningSettings.timeStep, 0.0001f, 0.0001f, 1.0f))
 	{
@@ -338,12 +345,12 @@ bool updateSim()
 
 	if (useUniformGrid)
 	{
-		bool enableRaymarch = renderMode == Renderer::RenderMode::METABALLS;
+		bool enableRaymarch = renderMode == Renderer::RenderMode::RAYMARCH;
 		if (ImGui::Checkbox("Enable raymarch rendering", &enableRaymarch))
 		{
 			if (enableRaymarch)
 			{
-				renderMode = Renderer::RenderMode::METABALLS;
+				renderMode = Renderer::RenderMode::RAYMARCH;
 			}
 			else
 			{
@@ -354,7 +361,7 @@ bool updateSim()
 		if (enableRaymarch)
 		{
 			ImGui::SliderInt("Raymarch iterations", &renderer.mbSampler.maxIterations, 1, 50);
-			ImGui::SliderFloat("Metaball radius", &renderer.mbSampler.boundaryRadius, 0.1f, 2.0f);
+			ImGui::SliderFloat("Sphere radius", &renderer.mbSampler.boundaryRadius, 0.1f, settings.smoothingRadius);
 		}
 	}
 
